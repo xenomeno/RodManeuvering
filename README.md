@@ -2,4 +2,4 @@
 
 Prioritized Sweeping via Reinforcement Learning
 
- RodManeuvering/RodManeuveringImages/Policy.gif 
+https://github.com/xenomeno/RodManeuvering/blob/master/RodManeuveringImages/Policy.gif
