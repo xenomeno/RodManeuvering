@@ -303,12 +303,31 @@ function _M.insert (self, key)
 end
 
 
-function _M.delete (self, key)
+function _M.delete (self, key, compare_func)
    local z = tree_search (self.root, key, self.sentinel)
    if z ~= self.sentinel then
+      if compare_func then
+        while z.right ~= self.sentinel and not compare_func(z) do
+          z = z.right
+        end
+      end
       rb_delete(self, z)
       self.elements = self.elements - 1
    end
+end
+
+function _M.GetMinKey(self)
+  local min = tree_minimum(self.root, self.sentinel)
+  if min ~= self.sentinel then
+    return min.key
+  end
+end
+
+function _M.GetMaxKey(self)
+  local max = tree_maximum(self.root, self.sentinel)
+  if max ~= self.sentinel then
+    return max.key
+  end
 end
 
 function _M.ExtractMin(self)

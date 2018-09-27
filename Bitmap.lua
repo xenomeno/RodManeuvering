@@ -1,7 +1,12 @@
+local DEFAULT_SCALE   = 1
+local DEFAULT_SPACING = 1
+
 Bitmap = {}
 Bitmap.__index = Bitmap
  
-function Bitmap.new(width, height)
+function Bitmap.new(width, height, init_color)
+    init_color = init_color or { 255, 255, 255 }
+    
     local self = {}
     setmetatable(self, Bitmap)
     
@@ -9,7 +14,7 @@ function Bitmap.new(width, height)
     for y = 0, height - 1 do
       data[y] = {}
       for x = 0, width - 1 do
-        data[y][x] = { 255, 255, 255 }
+        data[y][x] = init_color
       end
     end
     self.width = width
@@ -79,14 +84,15 @@ function Bitmap:WriteBMP(filename)
     fh:flush()
 end
  
-function Bitmap:Fill(x, y, width, heigth, color)
+function Bitmap:Fill(x, y, width, height, color)
     width = (width == nil) and self.width or width
     height = (height == nil) and self.height or height
-    width = width + x - 1
-    height = height + y - 1
+    width = x + width - 1
+    height = y + height - 1
     for i = y, height do
+      local data = self.data[i]
         for j = x, width do
-            self:SetPixel(j, i, color)
+            data[j] = color
         end
     end
 end
@@ -366,6 +372,102 @@ local s_Char =
     "**      ",
     "**      ",
   },
+  [","] =
+  {
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "  **    ",
+    "* **    ",
+    " **     ",
+  },
+  ["-"] =
+  {
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "********",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+  },
+  ["+"] =
+  {
+    "        ",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "********",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "        ",
+  },
+  ["_"] =
+  {
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "********",
+  },
+  ["="] =
+  {
+    "        ",
+    "        ",
+    "        ",
+    "********",
+    "        ",
+    "********",
+    "        ",
+    "        ",
+    "        ",
+  },
+  ["A"] =
+  {
+    "    *   ",
+    "   * *  ",
+    "  *   * ",
+    "  *   * ",
+    " *     *",
+    " *******",
+    "*      *",
+    "*      *",
+    "*      *",
+  },
+  ["B"] =
+  {
+    "*****   ",
+    "*    *  ",
+    "*     * ",
+    "*     * ",
+    "******  ",
+    "*     * ",
+    "*     * ",
+    "*    *  ",
+    "*****   ",
+  },
+  ["C"] =
+  {
+    "  ****  ",
+    " *    * ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    " *    * ",
+    "  ****  ",
+  },
   ["D"] =
   {
     "****    ",
@@ -390,6 +492,30 @@ local s_Char =
     "*       ",
     "********",
   },
+  ["F"] =
+  {
+    "******* ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "******* ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+  },
+  ["G"] =
+  {
+    " ****** ",
+    "*      *",
+    "*       ",
+    "*       ",
+    "*  *****",
+    "*      *",
+    "*      *",
+    "*      *",
+    " ****** ",
+  },
   ["I"] =
   {
     "******* ",
@@ -401,6 +527,30 @@ local s_Char =
     "   *    ",
     "   *    ",
     "******* ",
+  },
+  ["H"] =
+  {
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "********",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+  },
+  ["J"] =
+  {
+    " ****** ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "*   *   ",
+    " ***    ",
   },
   ["K"] =
   {
@@ -414,6 +564,18 @@ local s_Char =
     " *   *  ",
     " *    * ",
   },
+  ["L"] =
+  {
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "*       ",
+    "******* ",
+  },
   ["M"] =
   {
     "*      *",
@@ -424,6 +586,18 @@ local s_Char =
     "*      *",
     "*      *",
     "*      *",
+    "*      *",
+  },
+  ["N"] =
+  {
+    "*      *",
+    "**     *",
+    "* *    *",
+    "*  *   *",
+    "*  *   *",
+    "*   *  *",
+    "*    * *",
+    "*     **",
     "*      *",
   },
   ["O"] =
@@ -450,6 +624,30 @@ local s_Char =
     "*       ",
     "*       ",
   },
+  ["Q"] =
+  {
+    " ****** ",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*     * ",
+    " *   *  ",
+    "  * *  *",
+    "   **** ",
+  },
+  ["R"] =
+  {
+    "*****   ",
+    "*    *  ",
+    "*     * ",
+    "*     * ",
+    "*   *   ",
+    "* **    ",
+    "*   *   ",
+    "*    *  ",
+    "*     * ",
+  },
   ["S"] =
   {
     "  ***** ",
@@ -474,6 +672,90 @@ local s_Char =
     "   *    ",
     "   *    ",
   },
+  ["U"] =
+  {
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    " *    * ",
+    "  ****  ",
+  },
+  ["V"] =
+  {
+    "*      *",
+    " *     *",
+    " *     *",
+    " *     *",
+    "  *   * ",
+    "  *  *  ",
+    "  * *   ",
+    "   *    ",
+    "  *     ",
+  },
+  ["W"] =
+  {
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*      *",
+    "*  **  *",
+    "*  **  *",
+    " **  ** ",
+    " *    * ",
+  },
+  ["X"] =
+  {
+    "*      *",
+    " *     *",
+    "  *   * ",
+    "   * *  ",
+    "    *   ",
+    "   **   ",
+    "  *  *  ",
+    " *    * ",
+    "*      *",
+  },
+  ["Y"] =
+  {
+    "*      *",
+    " *     *",
+    "  *   * ",
+    "   * *  ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+    "    *   ",
+  },
+  ["Z"] =
+  {
+    "********",
+    "       *",
+    "      * ",
+    "     *  ",
+    "    *   ",
+    "   *    ",
+    "  *     ",
+    " *      ",
+    "********",
+  },
+  ["^"] =
+  {
+    "   **   ",
+    "  *  *  ",
+    " *    * ",
+    "*      *",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+    "        ",
+  },
   [":"] =
   {
     "        ",
@@ -497,6 +779,30 @@ local s_Char =
     "  *     ",
     " *      ",
     "*       ",
+  },
+  ["("] =
+  {
+    "    *   ",
+    "   *    ",
+    "  *     ",
+    " *      ",
+    " *      ",
+    " *      ",
+    "  *     ",
+    "   *    ",
+    "    *   ",
+  },
+  [")"] =
+  {
+    "   *    ",
+    "    *   ",
+    "     *  ",
+    "      * ",
+    "      * ",
+    "      * ",
+    "     *  ",
+    "    *   ",
+    "   *    ",
   },
   ["Unknown"] =
   {
@@ -540,8 +846,8 @@ end
 
 -- NOTE: scale should be an integer
 function Bitmap:DrawText(x, y, text, color, scale, spacing)
-  scale = scale or 1
-  spacing = spacing or 1
+  scale = scale or DEFAULT_SCALE
+  spacing = spacing or DEFAULT_SPACING
   
   local len = string.len(text)
   for i = 1, len do
@@ -561,4 +867,14 @@ function Bitmap:DrawText(x, y, text, color, scale, spacing)
     end
     x = x + scale * s_CharWidth + spacing
   end
+end
+
+-- NOTE: scale should be an integer
+function Bitmap:MeasureText(text, scale, spacing)
+  scale = scale or DEFAULT_SCALE
+  spacing = spacing or DEFAULT_SPACING
+  
+  local len = string.len(text)
+  
+  return len * scale * s_CharWidth + (len - 1) * spacing, scale * s_CharHeight
 end

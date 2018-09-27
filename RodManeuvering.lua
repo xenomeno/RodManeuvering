@@ -1,11 +1,11 @@
 dofile("Bitmap.lua")
 dofile("Geometry.lua")
+dofile("Graphics.lua")
 
 local RBTree = dofile("RBTree.lua")
 
-local IMAGE_SIZE      = 720
-local OBSTACLES_SCALE = 1.8       -- scale 1.0 corresponds to IMAGE_SIZE = 400
-local WRITE_FRAMES    = false      -- set to true to draw BMP images during processing
+local IMAGE_SIZE      = 1080
+local OBSTACLES_SCALE = 2.7       -- scale 1.0 corresponds to IMAGE_SIZE = 400
 
 local ROD_WIDTH       = math.floor(3 * OBSTACLES_SCALE)
 local ROD_LENGTH      = math.floor(120 * OBSTACLES_SCALE)
@@ -46,27 +46,16 @@ local s_Obstacles =
   Goal = { x = 336, y = 126, angle = DEG_10 },
 }
 
-local function clamp(x, a, b)
+function Min(a, b) return (a < b) and a or b end
+function Max(a, b) return (a > b) and a or b end
+
+function clamp(x, a, b)
 	if x < a then
 		return a
 	elseif x > b then
 		return b
 	else
 		return x
-	end
-end
-
-function table.find(array, field, value)
-	if not array then return end
-	if value == nil then
-		value = field
-		for i = 1, #array do
-			if value == array[i] then return i end
-		end
-	else
-		for i = 1, #array do
-			if value == array[i][field] then return i end
-		end
 	end
 end
 
@@ -90,6 +79,42 @@ function table.max(t, functor)
 		end
 	end
 	return max, max_i
+end
+
+function table.find(array, field, value)
+	if not array then return end
+	if value == nil then
+		value = field
+		for i = 1, #array do
+			if value == array[i] then return i end
+		end
+	else
+		for i = 1, #array do
+			if value == array[i][field] then return i end
+		end
+	end
+end
+
+function string.format_table(fmt_str, params_tbl, num_fmt)
+  local function repl_func(param)
+    local value = params_tbl[param]
+    if value ~= nil then
+      if type(value) == "bool" then
+        return tostring(value)
+      elseif type(value) == "number" then
+        local value_fmt = num_fmt and num_fmt[param]
+        return value_fmt and string.format(value_fmt, value) or tostring(value)
+      else
+        return tostring(value)
+      end
+    else
+      return string.format("<%s - invalid param!>", param)
+    end
+  end
+
+  local str = string.gsub(fmt_str, "<([%w_]+)>", repl_func)
+  
+  return str
 end
 
 local s_Sin, s_Cos = {}, {}
@@ -234,23 +259,15 @@ local function RegisterStateAction(Model, s, a, r, next_s)
   local record = Model[s][a]
   if record then
     record.r, record.next_s = r, next_s
+    Model.prev[next_s][a] = s
     return
   end
   
-  Model[s][a] = { r = r, next_s = next_s }
-  if not Model.observed_states.marked[s] then
-    Model.observed_states.marked[s] = true
-    table.insert(Model.observed_states, s)
-    Model.observed_state_actions[s] = { marked = {} }
-  end
-  local s_actions = Model.observed_state_actions[s]
-  if not s_actions.marked[a] then
-    s_actions.marked[a] = true
-    table.insert(s_actions, a)
-  end
+  Model[s][a] = { r = r, next_s = next_s }  
+  Model.prev[next_s][a] = s
 end
 
-local function GetMaxActions(Qs, threshold)
+local function GetMaxActions(Qs)
     local treshold = 0.001
     
     local max_actions, max_q = { 1 }, Qs[1]
@@ -341,7 +358,20 @@ local function CheckPriority(PQueue, Q, s, a, r, next_s, gamma)
     local max_Qa = table.max(Q[next_s])
     local priority = math.abs(r + gamma * max_Qa - Q[s][a])
     if priority > PQueue.treshold then
-      PQueue:insert({key = priority, s = s, a = a})
+      local present = PQueue.pair[s] and PQueue.pair[s][a]
+      if present then
+        if present < priority then
+          -- if pair is present in the queue only the higher priority is left
+          PQueue:delete(present, function(node) return node.s == s and node.a == a end)
+          PQueue:insert({key = priority, s = s, a = a})
+          PQueue.pair[s][a] = priority
+        end
+      else
+        -- new pair
+        PQueue:insert({key = priority, s = s, a = a})
+        PQueue.pair[s] = PQueue.pair[s] or {}
+        PQueue.pair[s][a] = priority
+      end
     end
 end
 
@@ -356,8 +386,7 @@ local function AddPrevStateAction(x, y, angle, dir_x, dir_y, angle_step, prev_ac
 end
 
 local s_BlockingState = false
-local s_NextState, s_PrevStateAction = false, false
-local s_MaxClockTime = 300.0      -- 5 minutes
+local s_NextState = false
 
 local function InitStateTransitions()
   local time = os.clock()
@@ -393,38 +422,13 @@ local function InitStateTransitions()
     end
   end
   
-  -- then precalculated all previous <prev_state, prev_action> pairs leading to a given state
-  local using_left = table.find(ACTIONS, LEFT)
-  local using_right = table.find(ACTIONS, RIGHT)
-  local prev_state = {}
-  for s = 1, STATES do
-    prev_state[s] = {}
-    if not blocking_state[s] then
-      local x_idx, y_idx, angle_idx = StateToPosAngleIdx(s)
-      local x, y, angle = PosAngleIdxToReal(x_idx, y_idx, angle_idx)
-      local dir_x, dir_y, pdir_x, pdir_y = GetRodDirs(x, y, angle)
-      local prev_sa = {}
-      AddPrevStateAction(x, y, angle, -dir_x, -dir_y, 0, FORWARD, prev_sa)
-      AddPrevStateAction(x, y, angle, dir_x, dir_y, 0, BACKWARD, prev_sa)
-      AddPrevStateAction(x, y, angle, 0, 0, -ROTATE_STEP_RAD, CLOCKWISE, prev_sa)
-      AddPrevStateAction(x, y, angle, 0, 0, ROTATE_STEP_RAD, ANTI_CLOCKWISE, prev_sa)
-      if using_right then
-        AddPrevStateAction(x, y, angle, -pdir_x, -pdir_y, 0, RIGHT, prev_sa)
-      end
-      if using_left then
-        AddPrevStateAction(x, y, angle, pdir_x, pdir_y, 0, LEFT, prev_sa)
-      end
-    end
-  end
-  
   time = os.clock() - time
   print(string.format("Blocking states & transition precalculation time: %ss", time))
   
   s_BlockingState = blocking_state
   s_NextState = next_state
-  s_PrevStateAction = prev_state
   
-  return blocking_state, next_state, prev_state
+  return blocking_state, next_state
 end
 
 local function DrawPolicy(bmp, Q, start, goal, next_state, stochastic)
@@ -466,33 +470,35 @@ local function FormatNumber(n)
   end
 end
 
-local function PrioritizedSweeping(start, goal, n, alpha, gamma, epsilon, treshold, bmp)
-  local Q, Model = {}, { observed_states = { marked = {} }, observed_state_actions = {} }
+local function PrioritizedSweeping(start, goal, n, alpha, gamma, epsilon, treshold, max_clock_time, bmp, frames)
+  local Q, Model = {}, { prev = {} }
   for s = 1, STATES do
-    Q[s], Model[s] = {}, {}
+    Q[s], Model[s], Model.prev[s] = {}, {}, {}
     for _, a in ipairs(ACTIONS) do
       Q[s][a] = 0.0
     end
   end
-  local PQueue = RBTree:new{ treshold = treshold }
+  local PQueue = RBTree:new{ treshold = treshold, pair = {} }
   
   local R, R_goal = 0.0, 1.0
-  local episode, total_time = 0, 0
+  local episode, total_time, total_updates = 0, 0, 0
   local shortest, shortest_path
   local last_lens, last_sum, last_num, last_idx, suboptimal_percents = {}, 0, 1000, 1, 98.5
   for i = 1, last_num do
     last_lens[i] = 1000000
     last_sum = last_sum + last_lens[i]
   end
+  local zero_updates_episodes, max_zero_updates_episodes = 0, 10
   
   local start_time = os.clock()
-  local frame_episodes = 10
-  while (not s_MaxClockTime) or (os.clock() - start_time < s_MaxClockTime) do
+  local ep_stats = {["On-Line"] = {}, ["Off-Line"] = {}, ["Updates"] = {}, ["PQueue"] = {} }
+  while (not max_clock_time) or (os.clock() - start_time < max_clock_time) do
     episode = episode + 1
     local time = 0
     local s = start
     local path = {}
     local cur_epsilon = epsilon / (1 + episode // 1000)
+    local last_updates = total_updates
     while s ~= goal and not s_BlockingState[s] do
       local a = TakeEpsilonGreedyAction(s, Q, cur_epsilon, exp_rnd)
       local next_s = s_NextState[s][a]
@@ -509,24 +515,30 @@ local function PrioritizedSweeping(start, goal, n, alpha, gamma, epsilon, tresho
         -- update most significant <s, a>
         local max = PQueue:ExtractMax()        
         local s, a = max.s, max.a
+        PQueue.pair[s][a] = nil
         local record = Model[s][a]
         local r, next_s = record.r, record.next_s
         local max_Qa = table.max(Q[next_s])
         local update = alpha * (r + gamma * max_Qa - Q[s][a])
         Q[s][a] = Q[s][a] + update
+        total_updates = total_updates + 1
         
         -- check all <prev_s, prev_a> predicted to lead to s
-        local prev_sa = s_PrevStateAction[s]
-        for prev_s, prev_a in ipairs(prev_sa) do
-          local record = Model[prev_s] and Model[prev_s][prev_a]
-          if record then
-            CheckPriority(PQueue, Q, prev_s, prev_a, record.r, s, gamma)
-          end
+        local prev_sa = Model.prev[s]
+        for prev_a, prev_s in pairs(prev_sa) do
+          CheckPriority(PQueue, Q, prev_s, prev_a, Model[prev_s][prev_a].r, s, gamma)
         end
         sim_updates_left = sim_updates_left - 1
       end
       s = next_s
       time, total_time = time + 1, total_time + 1
+      ep_stats["Updates"][total_time] = total_updates
+      ep_stats["PQueue"][total_time] = PQueue:ElementsCount()
+    end
+    zero_updates_episodes = (last_updates == total_updates) and (zero_updates_episodes + 1) or 0
+    if zero_updates_episodes >= max_zero_updates_episodes then
+      print(string.format("Last %d episodes were with 0 updates", max_zero_updates_episodes))
+      break
     end
     
     if s == goal then
@@ -536,36 +548,145 @@ local function PrioritizedSweeping(start, goal, n, alpha, gamma, epsilon, tresho
       
       local avg_last_len = last_sum / last_num
       if not shortest or time < shortest then
-        shortest = time
-        shortest_path = path
-        print(string.format("Clock: %ss, Episode: %d, Total Time: %d, New Optimal: %d, Suboptimal: %.2f[%.2f%%/.2%f%%]", os.clock() - start_time, episode, total_time, time, avg_last_len, 100.0 * shortest / avg_last_len, suboptimal_percents))
+        shortest, shortest_path = time, path
+        PQueue.treshold = treshold
+        print(string.format("Clock: %ss, Episode: %d, Total Time[Updates]: %d[%d], New Optimal: %d, Suboptimal: %.2f[%.2f%%/%.2f%%], PQueue[Max]: %d[%d]", os.clock() - start_time, episode, total_time, total_updates, time, avg_last_len, 100.0 * shortest / avg_last_len, suboptimal_percents, PQueue:ElementsCount(), PQueue:MaxElementsCount()))
       end
+      table.insert(ep_stats["On-Line"], { x = episode, y = time })
+      table.insert(ep_stats["Off-Line"], { x = episode, y = shortest })
       if 100.0 * shortest / avg_last_len >= suboptimal_percents then
-        print(string.format("Last %d paths were less than %.2f%% suboptimal", last_num, suboptimal_percents))
+        print(string.format("Last %d paths were more than %.2f%% suboptimal", last_num, suboptimal_percents))
         break
       end
     end
-    if WRITE_FRAMES and episode % frame_episodes == 0 then
+    if frames and episode % frames == 0 then
       local avg_last_len = last_sum / last_num
-      print(string.format("Clock: %ss, Episode: %d, Total time: %d, Time[Shortest]: %d[%d], Suboptimal: %.2f[%.2f%%/%.2f%%]", os.clock() - start_time, episode, total_time, time, shortest, avg_last_len, 100.0 * shortest / avg_last_len, suboptimal_percents))
-      
+      print(string.format("Clock: %ss, Episode: %d, Total time[updates]: %d[%d], Time[Shortest]: %d[%d], Suboptimal: %.2f[%.2f%%/%.2f%%], PQueue[Max]: %d[%d]", os.clock() - start_time, episode, total_time, total_updates, time, shortest, avg_last_len, 100.0 * shortest / avg_last_len, suboptimal_percents, PQueue:ElementsCount(), PQueue:MaxElementsCount()))
       local img = bmp:Clone()
       DrawPolicy(img, Q, start, goal, s_NextState, "stochastic")
       img:DrawText(0, 3, string.format("Episodes: %09d", episode), {128, 64, 255})
       local steps = string.format("Time Steps: %s", FormatNumber(total_time))
       img:DrawText(IMAGE_SIZE - 1 - string.len(steps) * 9, IMAGE_SIZE - 1 - 10, steps, {128, 64, 255})
-      --img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Policy_%06d episode%010d steps%010d len%d.bmp", episode / frame_episodes, episode, total_time, shortest))
-      img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Policy_%06d.bmp", episode / frame_episodes))
-      
+      img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Policy_%06d.bmp", episode / frames))
     end
   end
   
-  print(string.format("Finish Clock: %ss, Finished in %d steps, %d episodes, min len: %d, n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f", os.clock() - start_time, total_time, episode, shortest, n, alpha, gamma, epsilon))
+  print(string.format("Finish Clock: %ss, Finished in %d[%d] steps[updates], %d episodes, min len: %d, n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f, Max PQueue size: %d", os.clock() - start_time, total_time, total_updates, episode, shortest, n, alpha, gamma, epsilon, PQueue:MaxElementsCount()))
   
-  return shortest, shortest_path, episode, total_time, Q, os.clock() - start_time
+  if frames then
+    local img = bmp:Clone()
+    DrawPolicy(img, Q, start_s, goal_s, s_NextState, "stochastic")
+    img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Policy_ep%d_t%d_%d.bmp", episode, total_time, shortest))
+    local img = bmp:Clone()
+    DrawPath(img, shortest_path)
+    img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Episode_ep%d_t%d_%d.bmp", episode, total_time, shortest))
+    local img = bmp:Clone()
+    DrawPathFrames(img, shortest_path, episode, total_time, shortest)
+  end
+  
+  return
+  {
+    path = shortest_path,
+    episodes = episode,
+    time_steps = total_time,
+    updates = total_updates,
+    real_time = os.clock() - start_time,
+    ep_stats = ep_stats
+  }
 end
 
-local function RunRodManeuvering()
+local function FindShortestPathBFS(start, goal, bmp)
+  local marked = { [start] = true }
+  local action = {}
+  local steps = 0
+  local wave = {start}
+  while #wave > 0 do
+    steps = steps + 1
+    local new_wave = {}
+    for _, s in ipairs(wave) do
+      if s == goal then
+        steps = steps - 1
+        new_wave = {}
+        break
+      end
+      for _, a in ipairs(ACTIONS) do
+        local next_s = s_NextState[s][a]
+        if not marked[next_s] and not s_BlockingState[next_s] then
+          marked[next_s] = true
+          table.insert(new_wave, next_s)
+          action[next_s] = { s = s, a = a }
+        end
+      end
+    end
+    wave = new_wave
+  end
+  
+  local path = {}
+  while true do
+    local x, y, angle = StateToPosAngleReal(goal)
+    if bmp then
+      local img = bmp:Clone()
+      DrawRod(img, x, y, angle, {128, 128, 128}, {0, 0, 128})
+      img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_BFS_%d.bmp", steps - #path))
+    end
+    if goal == start then break end
+    table.insert(path, 1, goal)
+    goal = action[goal].s
+  end
+  
+  return path
+end
+
+function table.clamp(tbl, min, max)
+  if type(tbl[1]) == "number" then
+    for idx, y in ipairs(tbl) do
+      tbl[idx] = clamp(y, min, max)
+    end
+  else
+    for _, entry in ipairs(tbl) do
+      entry.y = clamp(entry.y, min, max)
+    end
+  end
+end
+
+function table.averagized(tbl, avg_span)
+  local k, len = 1, #tbl
+  if type(tbl[1]) == "number" then
+    while k <= len do
+      local sum_x, sum_y, count = 0, 0, Min(avg_span, len - k + 1)
+      for i = k, k + count - 1 do
+        sum_x = sum_x + i
+        sum_y = sum_y + tbl[i]
+      end
+      tbl[k // avg_span] = { x = k // avg_span, y = sum_y / count }
+      k = k + count
+    end
+  else
+    while k <= len do
+      local sum_x, sum_y, count = 0, 0, Min(avg_span, len - k + 1)
+      for i = k, k + count - 1 do
+        sum_x = sum_x + tbl[i].x
+        sum_y = sum_y + tbl[i].y
+      end
+      tbl[k // avg_span] = { x = k // avg_span, y = sum_y / count }
+      k = k + count
+    end
+  end
+  len = len // avg_span
+  while #tbl > len do table.remove(tbl) end
+  
+  return tbl
+end
+
+local function DrawGraphics(filename, graphs, label, int_x, skip_KP, div)
+  local bmp = Bitmap.new(IMAGE_SIZE, IMAGE_SIZE, {0, 0, 0})
+  DrawGraphs(bmp, graphs, div, nil, int_x, "int", skip_KP)
+  local text_w = bmp:MeasureText(label)
+  bmp:DrawText((IMAGE_SIZE - text_w) // 2, 5, label, {128, 128, 128})
+  bmp:WriteBMP(filename)
+end
+
+local function InitRodManeuvering()
   -- scale obstacles coordinates and start/goal positions
   s_Obstacles.Start.x = math.floor(s_Obstacles.Start.x * OBSTACLES_SCALE)
   s_Obstacles.Start.y = math.floor(s_Obstacles.Start.y * OBSTACLES_SCALE)
@@ -580,9 +701,11 @@ local function RunRodManeuvering()
     end
     table.insert(obstacle, { x = obstacle[1].x, y = obstacle[1].y })
   end
-  
-  local bmp = Bitmap.new(IMAGE_SIZE, IMAGE_SIZE)
-  bmp:Fill(0, 0, IMAGE_SIZE - 1, IMAGE_SIZE - 1, {255, 255, 255})
+  InitStateTransitions()
+end
+
+local function RunRodManeuvering(test)
+  local bmp = Bitmap.new(IMAGE_SIZE, IMAGE_SIZE, {255, 255, 255})
   for _, obstacle in ipairs(s_Obstacles) do
     local last = obstacle[#obstacle]
     for _, v in ipairs(obstacle) do
@@ -608,56 +731,300 @@ local function RunRodManeuvering()
   local x, y, angle = StateToPosAngleReal(goal_s)
   DrawRod(bmp, x, y, angle, { 0, 255, 0 }, { 0, 0, 255 })
   
-  bmp:WriteBMP("RodManeuvering.bmp")
-  
-  InitStateTransitions()
+  local shortest = FindShortestPathBFS(start_s, goal_s)
+  print(string.format("BFS length: %d", #shortest))
 
-  local n = { 1, 2, 3, 4, 5 }
-  local alpha = { 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 }
-  local gamma = { 0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99 }
-  local epsilon = { 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10 }
-  s_MaxClockTime = 300.0      -- 5 minutes
-  
-  local n = { 64 }
-  local alpha = { 0.3 }
-  local gamma = { 0.98 }
-  local epsilon = { 0.1 }
-  s_MaxClockTime = 72000.0      -- 20 hours
-  
   local treshold = 0.0001
   
-  local results = {}
-  local best, _n, _alpha, _gamma, _epsilon
-  for _, n in ipairs(n) do
-    results[n] = {}
-    for _, alpha in ipairs(alpha) do
-      results[n][alpha] = {}
-      for _, gamma in ipairs(gamma) do
-        results[n][alpha][gamma] = {}
-        for _, epsilon in ipairs(epsilon) do
-          print(string.format("********* n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f **********", n, alpha, gamma, epsilon))
+  local online = { funcs = {}, name_y = "Length" }
+  local offline = { funcs = {}, name_y = "Length" }
+  local updates = { funcs = {}, name_y = "Updates" }
+  local pqueue = { funcs = {}, name_y = "PQueue Size" }
+  local color = {{255,0,0},{0,255,0},{0,0,255},{255,255,0},{255,0,255},{0,255,255},{255,255,255},{128,128,128},{64,128,255}}
+  
+  local best
+  local max_axis_episodes, max_axis_time_steps = 0, 0
+  local stats = {}
+  if test.to_plot and test.plot_vs then
+    for graph_name, descr in pairs(test.to_plot) do
+      stats[graph_name] = { funcs = {}, name_x = test.name_x, name_y = descr.name_y }
+      stats[graph_name].funcs[descr.func_name] = {color = descr.color}
+    end
+  end
+  for idx_n, n in ipairs(test.n) do
+    for idx_alpha, alpha in ipairs(test.alpha) do
+      for idx_gamma, gamma in ipairs(test.gamma) do
+        for idx_epsilon, epsilon in ipairs(test.epsilon) do
+          local indices = { ["n"] = idx_n, ["alpha"] = idx_alpha, ["gamma"] = idx_gamma, ["epsilon"] = idx_epsilon }
+          local values = { ["n"] = n, ["alpha"] = alpha, ["gamma"] = gamma, ["epsilon"] = epsilon }
+          local names = { ["n"] = "n", ["alpha"] = "A", ["gamma"] = "G", ["epsilon"] = "Eps" }
+          local idx, vs, param = indices[test.plot_vs], values[test.plot_vs], names[test.plot_vs]
+          local name = test.plot_vs and string.format_table("<name>=<value>", { name = param, value = vs }, test.num_fmt) or ""
+          print(string.format("********* %s: n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f **********", name, n, alpha, gamma, epsilon))
           math.randomseed(1234)
-          local len, path, episodes, steps, Q, time = PrioritizedSweeping(start_s, goal_s, n, alpha, gamma, epsilon, treshold, bmp)
-          results[n][alpha][gamma][epsilon] = { len = len, path = path, episodes = episodes, steps = steps, Q = Q, time = time }
-          if (not best) or (best.len > len) then
-            best = results[n][alpha][gamma][epsilon]
-            _n, _alpha, _gamma, _epsilon = n, alpha, gamma, epsilon
+          local result = PrioritizedSweeping(start_s, goal_s, n, alpha, gamma, epsilon, treshold, test.max_time, bmp, test.frames)
+          if (not best) or (#best.path > #result.path) then
+            best = result
+            best.n, best.alpha, best.gamma, best.epsilon = n, alpha, gamma, epsilon
           end
-          print(string.format("Best in %ss: len = %d, n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f", best.time, best.len, _n, _alpha, _gamma, _epsilon))
+          print(string.format("Best in %ss: len = %d, n=%d, alpha = %.2f, gamma = %.2f, epsilon = %.3f", best.time_steps, #best.path, best.n, best.alpha, best.gamma, best.epsilon))
+          
+          local avg_span = math.pow(10, 2 + (math.ceil(math.log10(result.episodes)) // 10))
+          table.clamp(result.ep_stats["On-Line"], 0, 2 * #result.path)
+          online.funcs[name] = table.averagized(result.ep_stats["On-Line"], avg_span)
+          online.funcs[name].color = color[idx]
+          online.name_x = string.format("Episode x %d", avg_span)
+          table.clamp(result.ep_stats["Off-Line"], 0, 2 * #result.path)
+          offline.funcs[name] = table.averagized(result.ep_stats["Off-Line"], avg_span)
+          offline.funcs[name].color = color[idx]
+          offline.name_x = string.format("Episode x %d", avg_span)
+          max_axis_episodes = Max(max_axis_episodes, #online.funcs[name])
+                    
+          local avg_span = math.pow(10, 2 + (math.ceil(math.log10(result.episodes)) // 10))
+          updates.funcs[name] = table.averagized(result.ep_stats["Updates"], avg_span)
+          updates.funcs[name].color = color[idx]
+          updates.name_x = string.format("Time Step x %d", avg_span)
+          pqueue.funcs[name] = table.averagized(result.ep_stats["PQueue"], avg_span)
+          pqueue.funcs[name].color = color[idx]
+          pqueue.name_x = string.format("Time Step x %d", avg_span)
+          max_axis_time_steps = Max(max_axis_time_steps, #updates.funcs[name])
+
+          if test.to_plot then
+            for graph_name, descr in pairs(test.to_plot) do
+              table.insert(stats[graph_name].funcs[descr.func_name], {x = vs, y = result[graph_name], text = tostring(#result.path)})
+              descr.params = descr.params or {n = n, alpha = alpha, gamma = gamma, epsilon = epsilon}
+            end
+          end
         end
       end
     end
   end
+  
+  if test.to_plot and test.plot_vs then
+    for graph_name, descr in pairs(test.to_plot) do
+      DrawGraphics(descr.filename, stats[graph_name], string.format_table(test.title, descr.params, test.num_fmt), nil, nil, test.plot_div)
+    end
+  end
 
-  local img = bmp:Clone()
-  DrawPolicy(img, best.Q, start_s, goal_s, s_NextState, "stochastic")
-  img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Policy_ep%d_t%d_%d.bmp", best.episodes, best.steps, best.len))
-  local img = bmp:Clone()
-  DrawPath(img, best.path)
-  img:WriteBMP(string.format("RodManeuveringImages/RodManeuvering_Episode_ep%d_t%d_%d.bmp", best.episodes, best.steps, best.len))
-  local img = bmp:Clone()
-  DrawPathFrames(img, best.path, best.episodes, best.steps, best.len)
-
+  if test.online then
+    online.funcs["shortest"] = { {x = 0, y = #shortest}, {x = max_axis_episodes, y = #shortest}, color = {128, 128, 128} }
+    DrawGraphics(test.online, online, string.format("On-line Performance: %d, BFS Shortest: %d", #best.path, #shortest), "int x", "skip KP")
+  end
+  if test.offline then
+    offline.funcs["shortest"] = { {x = 0, y = #shortest}, {x = max_axis_episodes, y = #shortest}, color = {128, 128, 128} }
+    DrawGraphics(test.offline, offline, string.format("Off-line Performance: %d, BFS Shortest: %d", #best.path, #shortest), "int x", "skip KP")
+  end
+  if test.updates then
+    DrawGraphics(test.updates, updates, string.format("Updates vs Time Step"), "int x", "skip KP")
+  end
+  if test.pqueue then
+    DrawGraphics(test.pqueue, pqueue, string.format("Priority Queue Size vs Time Step"), "int x", "skip KP")
+  end
 end
 
-RunRodManeuvering()
+local s_Tests =
+{
+  ["SimUpdates"] =
+  {
+    title = "alpha=<alpha>, gamma=<gamma>, epsilon=<epsilon>",
+    num_fmt = { ["alpha"] = "%.2f", ["gamma"] = "%.2f", ["epsilon"] = "%.2f" },
+    n = { 1, 2, 4, 8, 16, 32, 64, 128, 256 },
+    alpha = { 0.1 }, gamma = { 0.97 }, epsilon = { 0.1 },
+    online = "RodManeuveringImages/RodManeuvering_SimUpdates_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_SimUpdates_Offline.bmp",
+    name_x = "Simulation Updates",
+    to_plot =
+    {
+      ["time_steps"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_TimeSteps.bmp",
+        func_name = "n vs Time Steps", name_y = "Time Steps", color = {0, 255, 0},
+      },
+      ["updates"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_Updates.bmp",
+        func_name = "n vs Total Updates", name_y = "Total updates", color = {0, 255, 0},
+      },
+      ["episodes"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_Episodes.bmp",
+        func_name = "n vs Episodes", name_y = "Episodes", color = {0, 255, 0},
+      },
+      ["real_time"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_RealTime.bmp",
+        func_name = "n vs Real Time", name_y = "Real Time(s)", color = {0, 255, 0},
+      },
+    },
+    plot_vs = "n",
+  }
+}
+
+local s_Tests =
+{
+  ["SimUpdates"] =
+  {
+    title = "alpha=<alpha>, gamma=<gamma>, epsilon=<epsilon>",
+    num_fmt = { ["alpha"] = "%.2f", ["gamma"] = "%.2f", ["epsilon"] = "%.2f" },
+    n = { 1, 2, 4, 8, 16, 32, 64, 128, 256 },
+    alpha = { 0.1 }, gamma = { 0.97 }, epsilon = { 0.1 },
+    online = "RodManeuveringImages/RodManeuvering_SimUpdates_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_SimUpdates_Offline.bmp",
+    updates = "RodManeuveringImages/RodManeuvering_SimUpdates_Updates.bmp",
+    pqueue = "RodManeuveringImages/RodManeuvering_SimUpdates_PQueueSize.bmp",
+    name_x = "Simulation Updates",
+    max_time = 300,
+    to_plot =
+    {
+      ["time_steps"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_TimeSteps.bmp",
+        func_name = "n vs Time Steps", name_y = "Time Steps", color = {0, 255, 0},
+      },
+      ["updates"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_Updates.bmp",
+        func_name = "n vs Total Updates", name_y = "Total updates", color = {0, 255, 0},
+      },
+      ["episodes"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_Episodes.bmp",
+        func_name = "n vs Episodes", name_y = "Episodes", color = {0, 255, 0},
+      },
+      ["real_time"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_SimUpdates_vs_RealTime.bmp",
+        func_name = "n vs Real Time", name_y = "Real Time(s)", color = {0, 255, 0},
+      },
+    },
+    plot_vs = "n",
+  },
+  ["Alpha"] =
+  {
+    title = "n=<n>, gamma=<gamma>, epsilon=<epsilon>",
+    num_fmt = { ["n"] = "%d", ["gamma"] = "%.2f", ["epsilon"] = "%.2f" },
+    alpha = { 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 },
+    n = { 32 }, gamma = { 0.97 }, epsilon = { 0.1 },
+    online = "RodManeuveringImages/RodManeuvering_Alpha_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_Alpha_Offline.bmp",
+    updates = "RodManeuveringImages/RodManeuvering_Alpha_Updates.bmp",
+    pqueue = "RodManeuveringImages/RodManeuvering_Alpha_PQueueSize.bmp",
+    name_x = "Alpha",
+    max_time = 300,
+    to_plot =
+    {
+      ["time_steps"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Alpha_vs_TimeSteps.bmp",
+        func_name = "Alpha vs Time Steps", name_y = "Time Steps", color = {0, 255, 0},
+      },
+      ["updates"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Alpha_vs_Updates.bmp",
+        func_name = "Alpha vs Total Updates", name_y = "Total updates", color = {0, 255, 0},
+      },
+      ["episodes"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Alpha_vs_Episodes.bmp",
+        func_name = "Alpha vs Episodes", name_y = "Episodes", color = {0, 255, 0},
+      },
+      ["real_time"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Alpha_vs_RealTime.bmp",
+        func_name = "Alpha vs Real Time", name_y = "Real Time(s)", color = {0, 255, 0},
+      },
+    },
+    plot_vs = "alpha",
+  },
+  ["Gamma"] =
+  {
+    title = "n=<n>, alpha=<alpha>, epsilon=<epsilon>",
+    num_fmt = { ["n"] = "%d", ["alpha"] = "%.2f", ["epsilon"] = "%.2f" },
+    gamma = { 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99 },
+    n = { 32 }, alpha = { 0.1 }, epsilon = { 0.1 },
+    online = "RodManeuveringImages/RodManeuvering_Gamma_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_Gamma_Offline.bmp",
+    updates = "RodManeuveringImages/RodManeuvering_Gamma_Updates.bmp",
+    pqueue = "RodManeuveringImages/RodManeuvering_Gamma_PQueueSize.bmp",
+    name_x = "Gamma",
+    max_time = 300,
+    to_plot =
+    {
+      ["time_steps"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Gamma_vs_TimeSteps.bmp",
+        func_name = "Gamma vs Time Steps", name_y = "Time Steps", color = {0, 255, 0},
+      },
+      ["updates"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Gamma_vs_Updates.bmp",
+        func_name = "Gamma vs Total Updates", name_y = "Total updates", color = {0, 255, 0},
+      },
+      ["episodes"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Gamma_vs_Episodes.bmp",
+        func_name = "Gamma vs Episodes", name_y = "Episodes", color = {0, 255, 0},
+      },
+      ["real_time"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Gamma_vs_RealTime.bmp",
+        func_name = "Gamma vs Real Time", name_y = "Real Time(s)", color = {0, 255, 0},
+      },
+    },
+    plot_vs = "gamma",
+    plot_div = 4,
+  },
+  ["Epsilon"] =
+  {
+    title = "n=<n>, alpha=<alpha>, gamma=<gamma>",
+    num_fmt = { ["n"] = "%d", ["alpha"] = "%.2f",["gamma"] = "%.2f" },
+    epsilon = { 0.1, 0.05, 0.01, 0.005, 0.001 },
+    n = { 32 }, alpha = { 0.1 }, gamma = { 0.97 },
+    online = "RodManeuveringImages/RodManeuvering_Epsilon_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_Epsilon_Offline.bmp",
+    updates = "RodManeuveringImages/RodManeuvering_Epsilon_Updates.bmp",
+    pqueue = "RodManeuveringImages/RodManeuvering_Epsilon_PQueueSize.bmp",
+    name_x = "Gamma",
+    max_time = 300,
+    to_plot =
+    {
+      ["time_steps"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Epsilon_vs_TimeSteps.bmp",
+        func_name = "Epsilon vs Time Steps", name_y = "Time Steps", color = {0, 255, 0},
+      },
+      ["updates"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Epsilon_vs_Updates.bmp",
+        func_name = "Epsilon vs Total Updates", name_y = "Total updates", color = {0, 255, 0},
+      },
+      ["episodes"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Epsilon_vs_Episodes.bmp",
+        func_name = "Epsilon vs Episodes", name_y = "Episodes", color = {0, 255, 0},
+      },
+      ["real_time"] =
+      {
+        filename = "RodManeuveringImages/RodManeuvering_Epsilon_vs_RealTime.bmp",
+        func_name = "Epsilon vs Real Time", name_y = "Real Time(s)", color = {0, 255, 0},
+      },
+    },
+    plot_vs = "epsilon",
+    plot_div = 4,
+  },
+  ["PolicyPath"] =
+  {
+    title = "n=<n>, alpha=<alpha>, gamma=<gamma>, epsilon=<epsilon>",
+    num_fmt = { ["n"] = "%d", ["alpha"] = "%.2f", ["epsilon"] = "%.3f", ["gamma"] = "%.2f" },    
+    n = { 32 }, alpha = { 0.1 }, gamma = { 0.98 }, epsilon = { 0.1 },
+    online = "RodManeuveringImages/RodManeuvering_PolicyPath_Online.bmp",
+    offline = "RodManeuveringImages/RodManeuvering_PolicyPath_Offline.bmp",
+    updates = "RodManeuveringImages/RodManeuvering_PolicyPath_Updates.bmp",
+    pqueue = "RodManeuveringImages/RodManeuvering_PolicyPath_PQueueSize.bmp",
+    frames = 1,
+  }
+}
+
+InitRodManeuvering()
+RunRodManeuvering(s_Tests.Alpha)
+--for _, test in pairs(s_Tests) do RunRodManeuvering(test) end  -- perform all tests
