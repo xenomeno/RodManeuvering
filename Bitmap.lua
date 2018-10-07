@@ -25,24 +25,27 @@ function Bitmap.new(width, height, init_color)
 end
  
 function Bitmap:WriteRawChar(file, c)
-    local dt
-    dt = string.format("%c", c)
-    file:write(dt)
+    file:write(string.tochar(c))
 end
 
 function Bitmap:WriteRawInt(file, int)
-  self:WriteRawChar(file, int & 0x000000FF)
-  self:WriteRawChar(file, (int & 0x0000FF00) >> 8)
-  self:WriteRawChar(file, (int & 0x00FF0000) >> 16)
-  self:WriteRawChar(file, (int & 0xFF000000) >> 24)
+    file:write(string.char(int & 0x000000FF))
+    file:write(string.char((int & 0x0000FF00) >> 8))
+    file:write(string.char((int & 0x00FF0000) >> 16))
+    file:write(string.char((int & 0xFF000000) >> 24))
 end
  
 function Bitmap:WriteBMP(filename)
     local fh = io.open(filename, 'w')
     if not fh then
+        io.flush()
+        collectgarbage("collect")
+        fh = io.open(filename, 'w')
+    end
+    if not fh then
         error(string.format("failed to open %q for writing", filename))
     else
-        fh:setvbuf("full", 64 * 1024)
+        fh:setvbuf("full", 512 * 1024)
         
         local extra_bytes = 4 - (self.width * 3) % 4
         extra_bytes = (extra_bytes == 4) and 0 or extra_bytes
@@ -59,7 +62,7 @@ function Bitmap:WriteBMP(filename)
         headers[7] = (24 << 16) + 1       -- biPlanes and biBitCount
         headers[8] = 0                    -- biCompression
         headers[9] = padded_size          -- biSizeImage
-        headers[10] = 0                    -- biXPelsPerMeter
+        headers[10] = 0                   -- biXPelsPerMeter
         headers[11] = 0                   -- biYPelsPerMeter
         headers[12] = 0                   -- biClrUsed
         headers[13] = 0                   -- biClrImportant
@@ -74,9 +77,9 @@ function Bitmap:WriteBMP(filename)
             local row = self.data[y]
             for x = 0, self.width - 1 do
                 local pixel = row[x]
-                self:WriteRawChar(fh, pixel[3])
-                self:WriteRawChar(fh, pixel[2])
-                self:WriteRawChar(fh, pixel[1])
+                fh:write(string.char(pixel[3]))
+                fh:write(string.char(pixel[2]))
+                fh:write(string.char(pixel[1]))
             end
         end
     end
@@ -432,6 +435,42 @@ local s_Char =
     "        ",
     "        ",
   },
+  ["!"] =
+  {
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "   **   ",
+    "        ",
+    "   **   ",
+  },
+  ["%"] =
+  {
+    " **   * ",
+    "*  *  * ",
+    " **  *  ",
+    "    *   ",
+    "   *    ",
+    "  *     ",
+    "  *  ** ",
+    " *  *  *",
+    " *   ** ",
+  },
+  ["&"] =
+  {
+    "   **   ",
+    "  *  *  ",
+    "  *  *  ",
+    "  * *   ",
+    "   *    ",
+    " ** * * ",
+    "*    ** ",
+    "*     * ",
+    " ***** *",
+  },
   ["A"] =
   {
     "    *   ",
@@ -768,6 +807,18 @@ local s_Char =
     "   **   ",
     "        ",
   },
+  ["#"] =
+  {
+    "  *  *  ",
+    "  *  *  ",
+    "  *  *  ",
+    " ****** ",
+    "  *  *  ",
+    " ****** ",
+    "  *  *  ",
+    "  *  *  ",
+    "  *  *  ",
+  },
   ["/"] =
   {
     "        ",
@@ -804,17 +855,41 @@ local s_Char =
     "    *   ",
     "   *    ",
   },
+  ["{"] =
+  {
+    "    *** ",
+    "   *    ",
+    "   *    ",
+    "  *     ",
+    "**      ",
+    "  *     ",
+    "   *    ",
+    "   *    ",
+    "    *** ",
+  },
+  ["}"] =
+  {
+    " ***    ",
+    "    *   ",
+    "    *   ",
+    "     *  ",
+    "      **",
+    "     *  ",
+    "    *   ",
+    "    *   ",
+    " ***    ",
+  },
   ["Unknown"] =
   {
-    " ***   *",
-    "*   *  *",
-    "    *  *",
-    "   *   *",
-    "  *    *",
-    " *     *",
-    " *     *",
-    "        ",
-    " *     *",
+    "********",
+    "********",
+    "***  ***",
+    "***  ***",
+    "**    **",
+    "***  ***",
+    "***  ***",
+    "********",
+    "********",
   },
 }
 
