@@ -116,4 +116,6 @@ function DrawGraphs(bmp, funcs_data, div, interval, int_x, int_y, skip_KP, level
     local w, h = bmp:MeasureText(funcs_data.name_x)
     bmp:DrawText(width - w - 5, height - h * 2 - 5, funcs_data.name_x, {128, 128, 128})
   end
+  
+  return function(pt) return {x = Ox + math.floor(scale_x * pt.x), y = Oy - math.floor(scale_y * pt.y)} end
 end

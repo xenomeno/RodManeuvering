@@ -219,7 +219,7 @@ end
 
 function Bitmap:Clone()
   local bmp = Bitmap.new(self.width, self.height)
-  local w, h, data = self.height, self.width, self.data
+  local w, h, data = self.width, self.height, self.data
   for y = 0, h - 1 do
     for x = 0, w - 1 do
       bmp.data[y][x] = data[y][x]
